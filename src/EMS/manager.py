@@ -150,7 +150,7 @@ class Databases(object):
             self.last_save = now
 
     def batch_result(self, result: DataFrame):
-        if result:
+        if result is not None and not result.empty:
             self.results.append(result)
             if self._df_size_check(result):  # If the batch write is already large, push it.
                 logger.warning(f'batch_result(): Early Push: Number of Columns: {result.shape[1]}; ' +
