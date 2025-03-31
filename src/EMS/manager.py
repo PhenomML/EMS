@@ -121,7 +121,7 @@ class Databases(object):
 
     def push(self, result: DataFrame, period=60.0):
         now = _now()
-        if result:
+        if result is not None and not result.empty:
             self.results.append(result)
             if self._df_size_check(result) or (now - self.last_save) > timedelta(seconds=period):
                 self._push_to_database()
