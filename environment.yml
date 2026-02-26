@@ -12,7 +12,7 @@ dependencies:
 #  - coiled
   - pip
   - pip:
-    - git+https://github.com/PhenomML/EMS.git@v0.0.23
+    - git+https://github.com/PhenomML/EMS.git@v0.0.24
 variables:
   MKL_NUM_THREADS: '1'
   OPENBLAS_NUM_THREADS: '1'
