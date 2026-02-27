@@ -8,6 +8,15 @@ EMS exists to eliminate that friction: define an experiment once, run it reliabl
 
 The current `EMS` package (`src/EMS/manager.py`) is a working first step. This document describes where we want to take it.
 
+## Architectural Vision and Scenarios
+
+This system is operated by the research lab. To that end, it records the experiments and costs as well as provides the records for reproducibility analyses. To that end, it has three major users -- the PI/lab staff, the individual researcher, and the scientific public interested in Frictionless Reproducibility of results.
+
+Currently, EMS is a library that enforces a style of embarrassingly parallel computation. This phase of development is to create the computational hub for the lab and researcher. To that end, we envision a server of a "tree of notebooks" that encompass everything needed to recreate a computational experiment, github hashes of research code, database tables, dataframe schema, rendering code. Data is to always reside in a separate database. Eventually, tables of this database will be accessible to the public to support published research. In addition to being a record of computation, it will also be a dashboard for in progress computations. This allows both the researcher and lab staff to observe and manage the progress of the computation.
+
+The third phase of the project will encompass selecting tools and patterns to support the research team. The fourth phase will support transitioning research into a Frictionlessly Reproducible server.
+
+
 ## Target Users
 
 - **Researchers** who define and run experiments (parameter sweeps, Monte Carlo simulations, etc.)
@@ -43,6 +52,26 @@ The current `EMS` package (`src/EMS/manager.py`) is a working first step. This d
 - Researchers can see live progress of computation from a notebook or terminal.
 - Logging of count, elapsed time, seconds-per-instance, and estimated remaining time.
 
+### R-6: Environment Reproducibility
+- EMS captures and records the exact code version (git hash) and environment spec at experiment launch time.
+- This information is stored alongside the experiment registry entry (see R-1).
+
+### R-7: Dashboard
+- A web-based dashboard provides live visibility into in-progress computations.
+- Accessible to both researchers and lab staff.
+- Serves as both a progress monitor and a record of completed experiments.
+
+### R-8: Multi-Researcher Support
+- EMS enforces namespacing by researcher and/or project to prevent table name collisions in shared databases.
+
+### R-9: Result Schema
+- EMS guarantees that every result DataFrame includes all input parameter keys used to invoke the experiment callable.
+
+### R-10: Experiment Dependencies
+- EMS supports workflows where one experiment's outputs feed another's inputs.
+- This is achieved naturally via the database: a downstream experiment queries an upstream result table as its input.
+- Pipeline configuration is flexible, including dynamic querying of prior steps.
+
 ---
 
 ## Out of Scope
@@ -55,18 +84,8 @@ The current `EMS` package (`src/EMS/manager.py`) is a working first step. This d
 
 ## Open Questions
 
-1. **Experiment registry** — Should EMS maintain a registry of all experiments ever run (not just results), queryable by researcher, project, date, or code version?
+1. **Experiment registry** — Should EMS maintain a registry of all experiments ever run (not just results), queryable by researcher, project, date, or code version? Notebook presentation and all of the information from R-6.
 
-2. **Failure handling** — How should failed instances be treated? Re-queued automatically, flagged for manual review, or silently dropped?
+2. **Failure handling** — How should failed instances be treated? Re-queued automatically, flagged for manual review, or silently dropped? Should have a default behavior. Should have a way to dynamically change that behavior.
 
-3. **Environment reproducibility** — Should EMS capture and record the exact code version (git hash) and environment spec at experiment launch time?
-
-4. **Multi-researcher support** — Should EMS enforce namespacing by researcher/project to prevent table name collisions in shared databases?
-
-5. **UI / dashboard** — Is a web-based progress dashboard (beyond log output) in scope?
-
-6. **Cost tracking** — Should EMS record cloud compute costs per experiment and report against funding accounts?
-
-7. **Result schema** — Should EMS enforce or validate a schema for result DataFrames, or remain fully schema-free?
-
-8. **Dependency between experiments** — Should EMS support workflows where one experiment's outputs are another's inputs?
+3. **Cost tracking** — Should EMS record cloud compute costs per experiment and report against funding accounts? Specified in experiment specification.
