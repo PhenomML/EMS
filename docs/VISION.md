@@ -65,7 +65,8 @@ The third phase of the project will encompass selecting tools and patterns to su
 - EMS enforces namespacing by researcher and/or project to prevent table name collisions in shared databases.
 
 ### R-9: Result Schema
-- EMS guarantees that every result DataFrame includes all input parameter keys used to invoke the experiment callable.
+- At v1.0, EMS injects all input parameter keys into every result DataFrame before storage. Experiment callables need only return computed values; EMS is responsible for associating results with their parameters.
+- **Pre-v1.0 (breaking change notice):** Researchers must continue to include all input parameters in their returned DataFrames. This discipline is required until v1.0 lands and EMS takes over parameter injection.
 
 ### R-10: Experiment Dependencies
 - EMS supports workflows where one experiment's outputs feed another's inputs.
