@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Shared Memory
+
+Read `docs/claude/MEMORY.md` at the start of every session. It contains accumulated project
+context, infrastructure notes, requirements status, and workflow preferences shared across
+all Claude instances and collaborators. Update it and commit when new decisions are made.
+
 ## Project Overview
 
 EMS (Experiment Management System) is a Python package built for the Stanford Donoho Lab to manage large-scale scientific computation experiments. It coordinates parameter sweeps across Dask clusters (local, SLURM, or Google Cloud) and persists results to SQLite (local), PostgreSQL (remote via Cloud SQL Proxy), or Google BigQuery.
