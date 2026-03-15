@@ -12,9 +12,35 @@ The current `EMS` package (`src/EMS/manager.py`) is a working first step. This d
 
 This system is operated by the research lab. To that end, it records the experiments and costs as well as provides the records for reproducibility analyses. To that end, it has three major users -- the PI/lab staff, the individual researcher, and the scientific public interested in Frictionless Reproducibility of results.
 
-Currently, EMS is a library that enforces a style of embarrassingly parallel computation. This phase of development is to create the computational hub for the lab and researcher. To that end, we envision a server of a "tree of notebooks" that encompass everything needed to recreate a computational experiment, github hashes of research code, database tables, dataframe schema, rendering code. Data is to always reside in a separate database. Eventually, tables of this database will be accessible to the public to support published research. In addition to being a record of computation, it will also be a dashboard for in progress computations. This allows both the researcher and lab staff to observe and manage the progress of the computation.
+### Two-System Architecture
 
-The third phase of the project will encompass selecting tools and patterns to support the research team. The fourth phase will support transitioning research into a Frictionlessly Reproducible server.
+EMS is composed of two distinct systems with the SQL database (BigQuery) as the shared interface between them:
+
+**Backend — Compute Engine**
+Specifies experiments, deploys them to a cluster, runs them, and writes results into the
+SQL database. This is the current EMS library. The researcher interacts with it to define
+parameter spaces and launch runs.
+
+**Frontend — Visualization & Analysis**
+A notebook-oriented environment (Python or R kernel, researcher's choice) that connects
+directly to the SQL database on BigQuery. Researchers query results, form visualizations,
+develop hypotheses about unexplored regions of the parameter space, and fit equations to
+observed data. This system does not move data — it only reads from the database.
+
+The SQL database is the contract between the two systems. Everything flows through it.
+
+### Phased Development
+
+Currently, EMS is a library that enforces a style of embarrassingly parallel computation.
+Phase 2 is to create the computational hub for the lab and researcher: a server of a
+"tree of notebooks" encompassing everything needed to recreate a computational experiment —
+git hashes of research code, database tables, dataframe schemas, rendering code. Data
+always resides in a separate database. Eventually, tables will be accessible to the public
+to support published research. The hub also serves as a dashboard for in-progress
+computations, allowing both researchers and lab staff to observe and manage progress.
+
+The third phase will select tools and patterns to support the research team. The fourth
+phase will support transitioning research into a Frictionlessly Reproducible server.
 
 
 ## Target Users
@@ -77,9 +103,10 @@ The third phase of the project will encompass selecting tools and patterns to su
 
 ## Out of Scope
 
-- Rendering / visualization of results (that belongs in researcher notebooks).
 - Managing the content or correctness of experiment callables (EMS runs what it's given).
 - Real-time streaming of partial results within a single experiment instance.
+- Authoring the visualization logic itself (researchers write their own notebook cells or
+  plotting code; EMS triggers and connects, but does not own the rendering).
 
 ---
 
