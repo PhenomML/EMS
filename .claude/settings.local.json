@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:marin.community)",
+      "WebFetch(domain:marin.readthedocs.io)"
+    ]
+  }
+}
