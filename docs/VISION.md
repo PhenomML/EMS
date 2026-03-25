@@ -43,6 +43,20 @@ The third phase will select tools and patterns to support the research team. The
 phase will support transitioning research into a Frictionlessly Reproducible server.
 
 
+## Design Principles
+
+- **Make the right thing the default.** Researchers under time pressure will skip optional
+  steps. If analysis notebooks, experiment records, and environment capture require extra
+  effort, they won't happen. EMS should scaffold them automatically so that doing the right
+  thing is easier than not doing it.
+- **The database is the contract.** All data lives in the database. The compute backend
+  writes; the analysis frontend reads. Nothing important should live only in files or memory.
+- **Friction kills science.** Every manual step between completing a run and seeing results
+  risks the results never being examined. Minimize steps; automate handoffs.
+- **Don't make researchers reinvent utilities.** Aggregation, cloud sync, CSV export, and
+  result padding are solved problems that appear in every project. EMS owns them so
+  researchers don't copy-paste them.
+
 ## Target Users
 
 - **Researchers** who define and run experiments (parameter sweeps, Monte Carlo simulations, etc.)
@@ -95,9 +109,28 @@ phase will support transitioning research into a Frictionlessly Reproducible ser
 - **Pre-v1.0 (breaking change notice):** Researchers must continue to include all input parameters in their returned DataFrames. This discipline is required until v1.0 lands and EMS takes over parameter injection.
 
 ### R-10: Experiment Dependencies
-- EMS supports workflows where one experiment's outputs feed another's inputs.
-- This is achieved naturally via the database: a downstream experiment queries an upstream result table as its input.
-- Pipeline configuration is flexible, including dynamic querying of prior steps.
+- EMS supports multi-phase workflows where one experiment's outputs feed another's inputs.
+- The real pattern observed in practice: run experiment A → extract derived parameters
+  (e.g., fit a model to results, extract coefficients) → use those as the input parameter
+  grid for experiment B.
+- EMS should provide a native `derive_params()` pattern: given an upstream result table
+  and a researcher-supplied transformation function, produce a parameter list for a
+  downstream experiment. This replaces manual CSV hand-off between projects.
+
+### R-11: Common Result Utilities
+- EMS provides first-class utilities shared across all projects:
+  - Groupby aggregation of result tables (mean, std across Monte Carlo replicates)
+  - Syncing local SQLite results to remote PostgreSQL or BigQuery
+  - Exporting result subsets to CSV
+- These must not be copy-pasted into every project. Observed in practice: identical
+  `stack_results.py`, `copy_results_to_cloud.py`, and `write_to_gbq.py` files duplicated
+  across every researcher project.
+
+### R-12: Variable-Length Output Support
+- EMS provides a convention or helper for callables that return variable-length arrays
+  (e.g., singular values whose count depends on input matrix dimensions).
+- Researchers must not be responsible for computing max output dimensions and padding
+  results to a fixed DataFrame width manually.
 
 ---
 
@@ -112,8 +145,17 @@ phase will support transitioning research into a Frictionlessly Reproducible ser
 
 ## Open Questions
 
-1. **Experiment registry** — Should EMS maintain a registry of all experiments ever run (not just results), queryable by researcher, project, date, or code version? Notebook presentation and all of the information from R-6.
+1. **Experiment registry** — Evidence from two researchers confirms this is required, not
+   optional. Both used git branches (70+ and 30+ respectively) as a substitute for a
+   versioned experiment registry. The registry must be queryable by researcher, project,
+   date, and code version, and must link to the scaffolded analysis notebook (R-6, US-003).
+   The open question is implementation: embedded in EMS, a sidecar database table, or a
+   structured directory of versioned JSON files?
 
-2. **Failure handling** — How should failed instances be treated? Re-queued automatically, flagged for manual review, or silently dropped? Should have a default behavior. Should have a way to dynamically change that behavior.
+2. **Failure handling** — How should failed instances be treated? Re-queued automatically,
+   flagged for manual review, or silently dropped? Should have a default behavior and a
+   way to dynamically change it. Both researchers experienced silent failure drops with
+   no post-mortem data available.
 
-3. **Cost tracking** — Should EMS record cloud compute costs per experiment and report against funding accounts? Specified in experiment specification.
+3. **Cost tracking** — Should EMS record cloud compute costs per experiment and report
+   against funding accounts? Specified in experiment definition.
