@@ -15,6 +15,7 @@ hub ("tree of notebooks" server + dashboard). See `docs/VISION.md` for the full 
 ## Key Documents
 
 - `docs/VISION.md` — requirements, open questions, architectural vision. Primary working document.
+- `docs/user-stories/` — US-001 through US-006, grounded in real researcher usage.
 - `docs/claude/MEMORY.md` — this file; shared Claude context committed to the repo.
 - `CLAUDE.md` — architecture and dev guidance for Claude instances.
 
@@ -25,6 +26,8 @@ hub ("tree of notebooks" server + dashboard). See `docs/VISION.md` for the full 
 - **Compute**: 2× NVIDIA DGX Spark on same Tailscale network; SLURM HPC (Stanford Sherlock);
   AWS/GCP/Azure cloud clusters.
 - **Storage backends**: local SQLite, remote PostgreSQL (Cloud SQL), Google BigQuery.
+- **Git push**: configured via SSH using `adonoho-GitHub` key; remote set to
+  `git@adonoho-GitHub:PhenomML/EMS.git`.
 
 ## Collaboration Model
 
@@ -33,26 +36,84 @@ mode is a shared `tmux` session on the Mac Pro hub (accessible via Tailscale), s
 work with the same Claude Code instance simultaneously. Claude Code is installed per-user on
 each machine; context travels via this committed memory file and `CLAUDE.md`.
 
-## Requirements Status (R-1 through R-10)
+## Current State (as of 2026-03-26)
 
-All defined in `docs/VISION.md`. Key decisions:
+We are in **requirements gathering and user story phase** for Phase 2. No Phase 2 code
+has been written yet. The work so far this sprint:
+
+1. **Architectural review of Phase 1** (`src/EMS/manager.py`) completed. Key findings:
+   - God module (610 lines, no internal separation) — must be split before Phase 2
+   - Backend dispatch duplicated 4× (if/elif chains per method) — needs StorageBackend abstraction
+   - Raw SQL constructed from unsanitized input — SQL injection risk
+   - Silent failure on write errors — data loss risk
+   - `record_experiment()` writes to CWD — needs configurable path
+   - R-9 (parameter injection) not yet implemented
+   - Dead code: `unroll_parameters()`, `update_index()`, `do_test_experiment()` stub
+
+2. **Two-system architecture clarified** (PI observation):
+   - Backend: experiment spec → cluster dispatch → SQL database
+   - Frontend: notebook environment (Python or R) → reads from SQL database
+   - The SQL database (BigQuery) is the contract between the two systems.
+
+3. **User stories written** (US-001 through US-006), grounded in code review of real projects:
+   - AMP_matrix_recovery (power researcher, Apratim Dey): 14 scripts, 70+ branches,
+     116 JSON files, thousands of param combos, zero analysis notebooks
+   - MatrixCompletion + Matrix_Denoising + MiladB90 (standard researcher, Milad B):
+     multi-phase CSV hand-off, duplicate utility scripts, variable-length output padding,
+     analysis notebook in separate disconnected repo
+   - BSky2GBQ: data pipeline using `local_db=False` and `EvalOnCluster` async API;
+     validates these as first-class use cases; not a requirements source
+
+## Requirements Status (R-1 through R-12)
+
+All defined in `docs/VISION.md`. Key decisions and status:
+
 - **R-9**: At v1.0, EMS injects input parameters into result DataFrames automatically.
-  Pre-v1.0, researchers must include params themselves (breaking change at v1.0).
+  Pre-v1.0, researchers must include params themselves. **Not yet implemented.**
+  Must handle multi-row returns (some callables emit multiple rows per param combo).
+- **R-10 (sharpened)**: Real pattern is `derive_params()` — run experiment A, apply
+  transformation to results, produce parameter list for experiment B. CSV hand-off
+  is the current painful workaround.
+- **R-11 (new)**: Common result utilities (groupby aggregation, SQLite→cloud sync,
+  CSV export) — currently copy-pasted into every project.
+- **R-12 (new)**: Variable-length output support — researchers currently compute max
+  output dimension manually and pad DataFrames.
+- **R-6**: Git hash capture must cover research project code, not only EMS version.
 - **R-7 (Dashboard)**: In scope for Phase 2.
-- **R-6 (Environment reproducibility)**: Git hash + env spec captured at launch.
 - **R-8**: Namespacing by researcher/project is required.
-- **R-10**: Experiment dependencies via database (downstream queries upstream table).
 
 ## Open Questions (3 remaining)
 
-1. **Experiment registry** — registry of all experiments ever run, queryable by
-   researcher/project/date/code version. Linked to notebook presentation and R-6 data.
-2. **Failure handling** — default behavior TBD; must be dynamically changeable.
-3. **Cost tracking** — cloud compute costs recorded per experiment; funding account
+1. **Experiment registry** — Confirmed required (not optional) by both researchers.
+   Both used git branches as a substitute (70+ and 30+ branches respectively).
+   Implementation TBD: embedded DB table, sidecar JSON directory, or separate service.
+2. **Failure handling** — Silent drops observed in both researcher projects. Default
+   behavior TBD; must be dynamically changeable.
+3. **Cost tracking** — Cloud compute costs recorded per experiment; funding account
    specified in experiment definition.
+
+## Key Design Principles (from VISION.md)
+
+- Make the right thing the default (scaffold notebooks, capture versions automatically)
+- The database is the contract (all data through SQL; nothing important in files only)
+- Friction kills science (minimize steps from run completion to visible results)
+- Don't make researchers reinvent utilities (aggregation, sync, export belong in EMS)
+
+## Next Logical Steps
+
+1. Discuss Phase 2 architecture with PI — the user stories and requirements are now
+   rich enough to support a real design conversation.
+2. Decide on the experiment registry implementation approach (open question 1).
+3. Plan the Phase 1 refactor needed before Phase 2 can be built:
+   - Split `manager.py` into package structure
+   - Introduce `StorageBackend` abstraction
+   - Fix SQL injection in `read_params()`
+   - Implement failure logging for failed futures
 
 ## Workflow / Preferences
 
 - Read `docs/VISION.md` fresh at the start of each session before discussing requirements.
-- Commit after each meaningful unit of work.
+- Commit after each meaningful unit of work; push via `git push` (SSH configured).
 - PI (Donoho) is an active stakeholder; shares doc for review between sessions.
+- One Claude Code instance per active GitHub project, in a tmux session.
+- Restart Claude after major topic boundaries; update this file before restarting.
