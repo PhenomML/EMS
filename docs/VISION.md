@@ -36,18 +36,53 @@ observed data. This system does not move data — it only reads from the databas
 
 The SQL database is the contract between the two systems. Everything flows through it.
 
+### Phase 2 Hub Architecture
+
+The Phase 2 hub is a **Prefect Server running on the lab's Intel Mac Pro**, accessible
+to the team via Tailscale. Prefect provides persistent job execution, a web dashboard,
+and run history. Dask provides the compute. BigQuery remains the data contract.
+
+```
+Researcher (any device, Tailscale)
+        │
+   ┌────┴─────────────────────┐
+   │                          │
+   ▼                          ▼
+Prefect Server            Dask Dashboard
+(job submit / history /   (live cluster view,
+ experiment registry)      free while cluster runs)
+        │
+        │ DaskTaskRunner
+        ▼
+   Dask Cluster  ────writes────▶  BigQuery / SQLite
+   (Sherlock / DGX Spark / GCP)
+```
+
+**Key properties of this architecture:**
+
+- Researchers submit experiments from the hub via Prefect UI or Python API, then
+  disconnect. Experiments run to completion as server-side Prefect Flows.
+- Job status, logs, and history are visible from any device via the Prefect web UI
+  (Tailscale URL).
+- The Dask scheduler dashboard (port 8787, Tailscale-exposed) provides live cluster
+  visibility while a cluster is active.
+- Notebook analysis runs separately — researchers connect local Jupyter or R sessions
+  directly to BigQuery. The hub is an orchestration and observability layer, not a
+  notebook host.
+- No cloud-specific runtime dependencies. The hub runs on lab-owned hardware.
+
+For the full record of alternatives considered and rejected, see
+`docs/architecture-decisions.md` (AD-2).
+
 ### Phased Development
 
 **Phase 1 (complete — v1.0.0 RC):** A working library that enforces a style of
 embarrassingly parallel computation. Deduplication, batched writes, multi-backend storage,
 Dask cluster dispatch.
 
-**Phase 2 (active):** The computational hub for the lab and researcher. A server hosting
-a "tree of notebooks" — everything needed to recreate a computational experiment: git
-hashes of research code, database tables, DataFrame schemas, rendering code. Data always
-resides in the database. The hub also serves as a dashboard for in-progress computations,
-allowing both researchers and lab staff to observe and manage progress. EMS takes
-responsibility for the utilities researchers currently copy-paste into every project.
+**Phase 2 (active):** The Prefect-based hub server. Persistent job execution, experiment
+registry, live progress dashboard, scaffolded analysis notebooks, and the common result
+utilities (R-11, R-12) researchers currently copy-paste into every project.
 
 **Phase 3:** Select tools and patterns to support the full research team workflow.
 
