@@ -2,19 +2,26 @@
 
 ## Why
 
-Scientific computation experiments are expensive to run, hard to reproduce, and difficult to monitor across large parameter spaces and distributed clusters. Researchers lose time re-running work they've already done, lose data when compute nodes are deallocated, and lack visibility into what's running, what's finished, and what failed.
+Scientific computation experiments are expensive to run, hard to reproduce, and difficult
+to monitor across large parameter spaces and distributed clusters. Researchers lose time
+re-running work they've already done, lose data when compute nodes are deallocated, and
+lack visibility into what's running, what's finished, and what failed.
 
-EMS exists to eliminate that friction: define an experiment once, run it reliably at any scale, and make results immediately available to analysts — without burdening the researcher with infrastructure management.
+EMS exists to eliminate that friction: define an experiment once, run it reliably at any
+scale, and make results immediately available to analysts — without burdening the researcher
+with infrastructure management.
 
-The current `EMS` package (`src/EMS/manager.py`) is a working first step. This document describes where we want to take it.
+The current `EMS` package (`src/EMS/manager.py`) is the Phase 1 foundation. This document
+describes where we are taking it.
 
-## Architectural Vision and Scenarios
+---
 
-This system is operated by the research lab. To that end, it records the experiments and costs as well as provides the records for reproducibility analyses. To that end, it has three major users -- the PI/lab staff, the individual researcher, and the scientific public interested in Frictionless Reproducibility of results.
+## Architectural Vision
 
 ### Two-System Architecture
 
-EMS is composed of two distinct systems with the SQL database (BigQuery) as the shared interface between them:
+EMS is composed of two distinct systems with the SQL database (BigQuery) as the shared
+interface between them:
 
 **Backend — Compute Engine**
 Specifies experiments, deploys them to a cluster, runs them, and writes results into the
@@ -31,17 +38,22 @@ The SQL database is the contract between the two systems. Everything flows throu
 
 ### Phased Development
 
-Currently, EMS is a library that enforces a style of embarrassingly parallel computation.
-Phase 2 is to create the computational hub for the lab and researcher: a server of a
-"tree of notebooks" encompassing everything needed to recreate a computational experiment —
-git hashes of research code, database tables, dataframe schemas, rendering code. Data
-always resides in a separate database. Eventually, tables will be accessible to the public
-to support published research. The hub also serves as a dashboard for in-progress
-computations, allowing both researchers and lab staff to observe and manage progress.
+**Phase 1 (complete — v1.0.0 RC):** A working library that enforces a style of
+embarrassingly parallel computation. Deduplication, batched writes, multi-backend storage,
+Dask cluster dispatch.
 
-The third phase will select tools and patterns to support the research team. The fourth
-phase will support transitioning research into a Frictionlessly Reproducible server.
+**Phase 2 (active):** The computational hub for the lab and researcher. A server hosting
+a "tree of notebooks" — everything needed to recreate a computational experiment: git
+hashes of research code, database tables, DataFrame schemas, rendering code. Data always
+resides in the database. The hub also serves as a dashboard for in-progress computations,
+allowing both researchers and lab staff to observe and manage progress. EMS takes
+responsibility for the utilities researchers currently copy-paste into every project.
 
+**Phase 3:** Select tools and patterns to support the full research team workflow.
+
+**Phase 4:** Transition research outputs into a Frictionlessly Reproducible public server.
+
+---
 
 ## Design Principles
 
@@ -57,11 +69,13 @@ phase will support transitioning research into a Frictionlessly Reproducible ser
   result padding are solved problems that appear in every project. EMS owns them so
   researchers don't copy-paste them.
 
+---
+
 ## Target Users
 
-- **Researchers** who define and run experiments (parameter sweeps, Monte Carlo simulations, etc.)
-- **Analysts** who read results and render views (Jupyter, R, Matlab)
-- **Lab administrators** who manage infrastructure, credentials, and costs
+- **Researchers** — define and run experiments (parameter sweeps, Monte Carlo simulations)
+- **Analysts** — read results and render views (Jupyter, R, Matlab)
+- **Lab administrators** — manage infrastructure, credentials, and costs
 
 ---
 
@@ -93,37 +107,43 @@ phase will support transitioning research into a Frictionlessly Reproducible ser
 - Logging of count, elapsed time, seconds-per-instance, and estimated remaining time.
 
 ### R-6: Environment Reproducibility
-- EMS captures and records the exact code version (git hash) and environment spec at experiment launch time.
-- This information is stored alongside the experiment registry entry (see R-1).
+- EMS captures and records the exact code version (git hash) and environment spec at
+  experiment launch time.
+- Capture must cover **both** EMS version and the research project code version.
+- This information is stored in the experiment registry (see open question 1).
 
 ### R-7: Dashboard
 - A web-based dashboard provides live visibility into in-progress computations.
 - Accessible to both researchers and lab staff.
 - Serves as both a progress monitor and a record of completed experiments.
+- Hosted on the lab hub server (Intel Mac Pro, Tailscale-accessible).
 
 ### R-8: Multi-Researcher Support
-- EMS enforces namespacing by researcher and/or project to prevent table name collisions in shared databases.
+- EMS enforces namespacing by researcher and/or project to prevent table name collisions
+  in shared databases.
 
-### R-9: Result Schema
-- At v1.0, EMS injects all input parameter keys into every result DataFrame before storage. Experiment callables need only return computed values; EMS is responsible for associating results with their parameters.
-- **Pre-v1.0 (breaking change notice):** Researchers must continue to include all input parameters in their returned DataFrames. This discipline is required until v1.0 lands and EMS takes over parameter injection.
+### R-9: Result Schema — Parameter Injection
+- EMS injects all input parameter keys into every result row before storage.
+- Experiment callables need only return computed output values; EMS associates results
+  with their parameters automatically.
+- **Must handle multi-row returns**: some callables emit multiple rows per parameter
+  combination (e.g., one row per iteration). EMS injects input params into every row.
+- **Pre-v2.0 (current state):** Researchers must continue to include all input parameters
+  in their returned DataFrames. This discipline is required until R-9 lands.
 
 ### R-10: Experiment Dependencies
 - EMS supports multi-phase workflows where one experiment's outputs feed another's inputs.
-- The real pattern observed in practice: run experiment A → extract derived parameters
-  (e.g., fit a model to results, extract coefficients) → use those as the input parameter
-  grid for experiment B.
-- EMS should provide a native `derive_params()` pattern: given an upstream result table
-  and a researcher-supplied transformation function, produce a parameter list for a
-  downstream experiment. This replaces manual CSV hand-off between projects.
+- Native `derive_params()` pattern: given an upstream result table and a researcher-supplied
+  transformation function, produce a parameter list for a downstream experiment.
+- This replaces the painful CSV hand-off between projects observed in practice.
 
 ### R-11: Common Result Utilities
 - EMS provides first-class utilities shared across all projects:
   - Groupby aggregation of result tables (mean, std across Monte Carlo replicates)
   - Syncing local SQLite results to remote PostgreSQL or BigQuery
   - Exporting result subsets to CSV
-- These must not be copy-pasted into every project. Observed in practice: identical
-  `stack_results.py`, `copy_results_to_cloud.py`, and `write_to_gbq.py` files duplicated
+- These must not be copy-pasted into every project. Confirmed pattern: identical
+  `stack_results.py`, `copy_results_to_cloud.py`, and `write_to_gbq.py` duplicated
   across every researcher project.
 
 ### R-12: Variable-Length Output Support
@@ -145,17 +165,43 @@ phase will support transitioning research into a Frictionlessly Reproducible ser
 
 ## Open Questions
 
-1. **Experiment registry** — Evidence from two researchers confirms this is required, not
-   optional. Both used git branches (70+ and 30+ respectively) as a substitute for a
-   versioned experiment registry. The registry must be queryable by researcher, project,
-   date, and code version, and must link to the scaffolded analysis notebook (R-6, US-003).
-   The open question is implementation: embedded in EMS, a sidecar database table, or a
-   structured directory of versioned JSON files?
+### 1. Experiment Registry Implementation
+Evidence from two researchers confirms this is required, not optional. Both used git
+branches (70+ and 30+ respectively) as a substitute for a versioned experiment registry.
 
-2. **Failure handling** — How should failed instances be treated? Re-queued automatically,
-   flagged for manual review, or silently dropped? Should have a default behavior and a
-   way to dynamically change it. Both researchers experienced silent failure drops with
-   no post-mortem data available.
+The registry must be queryable by researcher, project, date, and code version, and must
+link to the scaffolded analysis notebook (R-6, US-003).
 
-3. **Cost tracking** — Should EMS record cloud compute costs per experiment and report
-   against funding accounts? Specified in experiment definition.
+**Options under consideration:**
+- Embedded DB table (in BigQuery or local SQLite alongside results)
+- Structured directory of versioned JSON files with a query layer
+- Separate lightweight service
+
+### 2. Failure Handling
+Both researchers experienced silent failure drops with no post-mortem data available.
+Failed Dask futures are currently logged as warnings and skipped.
+
+**Questions:**
+- Should failed instances be re-queued automatically, flagged for manual review, or
+  logged and skipped (current behavior)?
+- Should there be a default behavior that can be changed per-experiment?
+- What post-mortem data should be captured (parameters, exception, traceback)?
+
+### 3. Cost Tracking
+Should EMS record cloud compute costs per experiment and report against funding accounts?
+The `EMS_Model.md` specifies a `Funding` table and per-experiment cost attribution.
+
+---
+
+## Phase 2 Architecture Prerequisite
+
+Before Phase 2 features can be built, `manager.py` must be refactored:
+
+- **Split into a package**: `__init__.py`, `storage.py`, `cluster.py`, `registry.py`,
+  `utils.py` — the current 600-line god module does not scale to Phase 2 scope.
+- **`StorageBackend` abstraction**: Replace the 4× duplicated if/elif dispatch chains in
+  `read_params()`, `read_table()`, `_push_to_database()` with a clean backend interface.
+- **Configurable `record_experiment()` path**: Currently hardcoded to CWD; must be
+  configurable so JSON records land in a consistent location.
+
+This refactor is the first work item on `claude-v2.0.0_phase2`.
