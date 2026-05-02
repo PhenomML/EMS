@@ -12,7 +12,7 @@ EMS (Experiment Management System) for the Stanford Donoho Lab. A Python library
 managing embarrassingly parallel scientific computation experiments across Dask clusters,
 storing results in SQLite / PostgreSQL / BigQuery.
 
-**v1.0.0 RC** is in team review (branch `claude-v1.0.0_RC1`, announced 2026-03-27).
+**v1.0.0 is live on `main`** (fast-forward merged from RC1, tagged `v1.0.0`, 2026-04-25).
 **Phase 2** is active on branch `claude-v2.0.0_phase2`.
 
 ---
@@ -23,6 +23,9 @@ storing results in SQLite / PostgreSQL / BigQuery.
 |----------|---------|
 | `docs/VISION.md` | Requirements R-1–R-12, chosen architecture, phased plan. Primary working doc. |
 | `docs/architecture-decisions.md` | Every significant architectural choice with alternatives examined and rationale. |
+| `docs/design/` | Design docs, proposals, experiment records. "Experimental notebooks" live here. |
+| `docs/design/notebook-prototype-v1.md` | Standardized experiment notebook section structure; 3 prototype variants. |
+| `docs/design/implementation-paper-proposal-v7-xla-tpu.md` | SteinSense paper proposal — primary validation challenge for EMS Phase 2 design. |
 | `docs/user-stories/` | US-001–US-006, grounded in real researcher code reviews. |
 | `docs/EMS_Model.md` | Original PI model: four DB tables (Experiment, Experimenter, Project, Funding). |
 | `docs/claude/MEMORY.md` | This file. |
@@ -46,8 +49,8 @@ storing results in SQLite / PostgreSQL / BigQuery.
 
 | Branch | Status |
 |--------|--------|
-| `main` | Stable releases |
-| `claude-v1.0.0_RC1` | v1.0 RC — in team review; do not develop here |
+| `main` | v1.0.0 live — tagged, pushed 2026-04-25 |
+| `claude-v1.0.0_RC1` | Merged to main; do not develop here |
 | `claude-v2.0.0_phase2` | Active Phase 2 development |
 
 ---
@@ -62,6 +65,10 @@ Ray's Actor model is an unnecessary abstraction for embarrassingly parallel swee
 Satisfies the core Phase 2 requirement: researcher launches experiment from hub,
 disconnects, checks status via URL from any device. Prefect owns job lifecycle and
 history; Dask owns compute; BigQuery is the data contract.
+
+Temporal was evaluated and rejected: EMS's `dedup_experiment()` already provides
+data-layer restart guarantees, making Temporal's durable execution redundant for this
+use case. Prefect's lower operational complexity wins.
 
 ```
 Researcher (any device, Tailscale)
@@ -80,29 +87,39 @@ Prefect Server            Dask Dashboard
 
 **AD-3: Storage** — SQLite (local durability) + PostgreSQL (relational access) +
 BigQuery (analytical frontend). BigQuery is the contract between compute and analysis.
+For multi-cluster work (SteinSense paper), BigQuery is the **primary** result store.
 
 **AD-4: Python 3.11 for v1.0; Python 3.12 for v1.1.** 3.13 deferred.
 
 ---
 
-## v1.0.0 — What Was Done (single commit on `claude-v1.0.0_RC1`)
+## SteinSense Paper — Primary EMS Validation Challenge
 
-1. Dead code removed: `unroll_parameters()`, `update_index()`, `do_test_experiment()`,
-   `_df_size_check()`, `EvalOnCluster.result/eval_params/__aiter__/__anext__`
-2. SQL injection fixed: double-quoted identifiers + `sqlalchemy.text()`;
-   helpers `_safe_column_list()`, `_safe_table_name()`
-3. EvalOnCluster hardened: `RuntimeError` guards; failed-future warning logs;
-   `key_from_params` raises `ValueError` on key mismatch
-4. Logging: WARNING → INFO for normal operations
-5. Google-style docstrings on all public API
-6. `tests/test_manager.py`: 22 unit tests, all passing
-7. Full `README.md` written
-8. Version bumped to 1.0.0 in `pyproject.toml` and `environment.yml`
-9. `unroll_parameters_gpt({})` now returns `[]` (empty-dict guard added)
+`docs/design/implementation-paper-proposal-v7-xla-tpu.md` describes a systematic
+multi-backend GPU implementation study of the SteinSense AMP algorithm. EMS is named
+as the dispatch infrastructure and BigQuery as the unified result store (Contribution 7).
+
+Key requirements this places on EMS:
+- `implementation` and `hardware` as first-class sweep parameters (columns in results)
+- `seed` as explicit sweep parameter (controlled RNG for cross-implementation joins)
+- Multi-cluster dispatch: same experiment dict → Sherlock, Marlowe, DGX Spark
+- BigQuery as primary store (all clusters write to one table)
+- R-6 (git hash) is an audit trail requirement, not optional
+- Experiment registry must track which implementations ran, with what code version
+
+The core sweep is tractable (N ≤ 5000 for most cells); N=10⁶ is Marlowe-only.
+Current `Databases` write batching handles this scale without modification.
+
+Design agenda (in order — each produces a `docs/design/` document):
+1. SteinSense experiment dict (parameter schema)
+2. SteinSense results schema (what the callable returns)
+3. Progress visualization for 6-dimensional space
+4. AD-5: experiment registry — forced decision by this study
+5. Multi-cluster coordination design
 
 ---
 
-## Phase 2 — Work Items (priority order)
+## Phase 2 — Work Items (priority order, updated 2026-04-25)
 
 ### 0. Architecture prerequisite (do before any feature work)
 Refactor `manager.py` into a package:
@@ -115,17 +132,18 @@ Refactor `manager.py` into a package:
 EMS injects input params into every result row automatically. Must handle multi-row
 returns (e.g., AMP researcher emits one row per iteration, not per param combo).
 
-### 2. Experiment registry (AD-5 — decision pending)
+### 2. R-6: Git hash capture (moved up from item 4)
+Capture git hash of research project code (not only EMS version) at run time.
+Required audit trail for SteinSense 14-cell implementation matrix.
+
+### 3. Experiment registry (AD-5 — decision pending)
 Queryable record: researcher, project, date, git hash, linked notebook.
 Options: embedded BigQuery table, structured JSON directory, Prefect Flow metadata.
-**This decision must be made before hub server work begins.**
+**Must resolve before hub work begins. SteinSense study makes requirements concrete.**
 
-### 3. Prefect integration
+### 4. Prefect integration
 Wrap `do_on_cluster()` as a Prefect Flow. Deploy Prefect Server on Mac Pro as a
 persistent service (launchd plist). Expose Dask dashboard via Tailscale.
-
-### 4. R-6: Git hash capture
-Capture git hash of research project code (not only EMS version) at run time.
 
 ### 5. R-11: Common result utilities
 Groupby aggregation, SQLite→cloud sync, CSV export — built into EMS, not copy-pasted.
@@ -170,3 +188,6 @@ Replaces CSV hand-off between multi-phase experiments.
 - Enter plan mode before non-trivial implementation.
 - Concise, direct responses preferred.
 - New architectural choices → new AD entry in `docs/architecture-decisions.md`.
+- Design documents and experiment records live in `docs/design/`.
+- Stay in design phase: use SteinSense study to validate each EMS design decision
+  before implementation begins.
