@@ -113,10 +113,14 @@ Split `manager.py` into `storage.py`, `cluster.py`, `registry.py`, `utils.py`.
 
 ### 1. R-9: Parameter Injection
 EMS injects `{**swept_params, **fixed_params}` into every result row automatically.
-Must handle multi-row returns. Blocked by OQ-4 (single-row vs multi-row decision).
+Must handle multi-row returns as a first-class case (Apratim's per-iteration trace is
+the design driver). Implementation: inject into all rows regardless of count; single-row
+is just len=1. API contract open as OQ-4b.
 
 ### 2. R-6: Git Hash Capture
-Capture research project git hash at launch. Location (per-row vs registry) blocked by OQ-7.
+Capture research project git hash at launch. **OQ-7 resolved: per-row** — `project_git_hash`
+in every result row, not registry only. Bug fixes mid-run mean multiple git versions
+can coexist in one table; per-row is the only safe audit trail.
 
 ### 3. Experiment Registry (OQ-6 — decision pending)
 Queryable record: researcher, project, date, git hash, callable, linked notebook.
@@ -144,15 +148,29 @@ Common utilities, variable-length output helper, `derive_params()`.
 - Brief at `docs/design/steinsense-repo-brief.md` — handed to SteinSense Claude instance
 - Structure: `src/steinsense/{numpy,jax_cpu,jax_gpu,pytorch_gpu,cupy,triton,cutile}.py`
 - Each file: `run_recovery_ad`, `run_recovery_closed` (two entry points per backend)
-- OQ-4 decision (single-row vs multi-row output) must be made by SteinSense Claude and
-  reported back — it drives EMS R-9 design
+- **OQ-4a resolved**: `run_recovery_*` returns single-row (wall_time, n_iterations,
+  recovered, final_error). Full schema in `steinsense-results-schema.md`.
 - EMS v1.0 compat: temporary notebook wrapper adds params to rows until R-9 lands
+
+---
+
+## SteinSense Results Schema (`docs/design/steinsense-results-schema.md`)
+
+Written 2026-05-03. Resolves OQ-4a and OQ-7. Key decisions:
+- **Single-row output** for `run_recovery_*` (OQ-4a)
+- **Per-row git hash** `project_git_hash` (OQ-7) — bug fixes mid-run can mix versions
+- Full column set: output (wall_time, n_iterations, recovered, final_error) + params
+  (N, B, delta, distribution, seed, implementation, jacobian, hardware, max_iterations,
+  tolerance) + provenance (project_git_hash, ems_version)
+- BigQuery: partition by `hardware`, cluster by `implementation`, `jacobian`, `N`
+- **OQ-4b still open**: R-9 multi-row API contract. Apratim's per-iteration trace is
+  first-class, not a future extension. Validate return structure before closing.
 
 ---
 
 ## Design Agenda (next docs to produce)
 
-1. `steinsense-results-schema.md` — resolves OQ-4; unblocks R-9
+1. ~~`steinsense-results-schema.md`~~ — **done** 2026-05-03
 2. `progress-visualization.md` — resolves OQ-8
 3. `experiment-registry-design.md` — resolves OQ-6; blocks Items 4b/4c
 4. `multi-cluster-coordination.md` — cluster routing design for Item 4b
