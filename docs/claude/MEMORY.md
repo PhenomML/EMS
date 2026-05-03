@@ -21,11 +21,13 @@ storing results in SQLite / PostgreSQL / BigQuery.
 
 | Document | Purpose |
 |----------|---------|
-| `docs/VISION.md` | Requirements R-1–R-12, chosen architecture, phased plan. Primary working doc. |
-| `docs/architecture-decisions.md` | Every significant architectural choice with alternatives examined and rationale. |
-| `docs/design/` | Design docs, proposals, experiment records. "Experimental notebooks" live here. |
-| `docs/design/notebook-prototype-v1.md` | Standardized experiment notebook section structure; 3 prototype variants. |
-| `docs/design/implementation-paper-proposal-v7-xla-tpu.md` | SteinSense paper proposal — primary validation challenge for EMS Phase 2 design. |
+| `docs/VISION.md` | Requirements R-1–R-12, chosen architecture, phased plan. |
+| `docs/architecture-decisions.md` | AD-1 through AD-5 with full rationale and alternatives. |
+| `docs/design/phase2-plan.md` | Overall Phase 2 architecture and work items. **Read this.** |
+| `docs/design/open-questions.md` | 11 open questions, living tracker. Update here when resolved. |
+| `docs/design/notebook-prototype-v3.md` | Current experiment notebook spec (callable in dict, CELLS pattern). |
+| `docs/design/implementation-paper-proposal-v7-xla-tpu.md` | SteinSense paper — primary EMS validation challenge. |
+| `docs/design/steinsense-repo-brief.md` | Briefing for SteinSense Claude instance creating that repo. |
 | `docs/user-stories/` | US-001–US-006, grounded in real researcher code reviews. |
 | `docs/EMS_Model.md` | Original PI model: four DB tables (Experiment, Experimenter, Project, Funding). |
 | `docs/claude/MEMORY.md` | This file. |
@@ -55,139 +57,124 @@ storing results in SQLite / PostgreSQL / BigQuery.
 
 ---
 
-## Architecture Decisions (summary — full record in `docs/architecture-decisions.md`)
+## Architecture Decisions (AD-1 through AD-5)
 
-**AD-1: Dask chosen over Ray.**
-Dask embraces the DataFrame as primary abstraction, matching the data science community.
-Ray's Actor model is an unnecessary abstraction for embarrassingly parallel sweeps.
+**AD-1: Dask over Ray.** DataFrame-first culture; Actor model unnecessary for sweeps.
 
-**AD-2: Prefect Server on Mac Pro as hub orchestration layer.**
-Satisfies the core Phase 2 requirement: researcher launches experiment from hub,
-disconnects, checks status via URL from any device. Prefect owns job lifecycle and
-history; Dask owns compute; BigQuery is the data contract.
+**AD-2: Prefect Server on Mac Pro.** Researcher submits → disconnects → checks URL.
+Dask owns compute; Prefect owns lifecycle; BigQuery is data contract.
 
-Temporal was evaluated and rejected: EMS's `dedup_experiment()` already provides
-data-layer restart guarantees, making Temporal's durable execution redundant for this
-use case. Prefect's lower operational complexity wins.
+**AD-3: Storage.** SQLite (local) + PostgreSQL (relational) + BigQuery (analytical).
+BigQuery is the contract between compute and analysis. Primary store for multi-cluster work.
 
+**AD-4: Python 3.11 for v1.0; 3.12 for v1.1.** 3.13 deferred.
+
+**AD-5: JupyterHub on Mac Pro as Phase 2 notebook surface.** Moved from Phase 3 for early
+validation. Role: researcher edits notebooks, submits to Prefect, runs BigQuery analysis
+from any device. Notebooks live in git repos; JupyterHub is the interface, not the store.
+Success criteria: researchers open JupyterHub naturally (not SSH to local Jupyter).
+
+Full hub architecture:
 ```
 Researcher (any device, Tailscale)
         │
-   ┌────┴─────────────────────┐
-   │                          │
-   ▼                          ▼
-Prefect Server            Dask Dashboard
-(job submit / history /   (live cluster view,
- experiment registry)      free while cluster runs)
-        │ DaskTaskRunner
-        ▼
-   Dask Cluster  ────writes────▶  BigQuery / SQLite
-   (Sherlock / DGX Spark / GCP)
+   ┌────┼─────────────────────────────┐
+   │    │                             │
+   ▼    ▼                             ▼
+JupyterHub              Prefect Server           Dask Dashboard
+(edit / submit /        (job execution /         (live cluster view)
+ analysis)               history / registry)
+        │                DaskTaskRunner
+        │ submit_experiment()   │
+        └──────────────▶  Dask Cluster ──writes──▶  BigQuery / SQLite
 ```
 
-**AD-3: Storage** — SQLite (local durability) + PostgreSQL (relational access) +
-BigQuery (analytical frontend). BigQuery is the contract between compute and analysis.
-For multi-cluster work (SteinSense paper), BigQuery is the **primary** result store.
+---
 
-**AD-4: Python 3.11 for v1.0; Python 3.12 for v1.1.** 3.13 deferred.
+## Experiment Dict Design (v3 — current)
+
+Key fields added in Phase 2 design:
+- `callable`: fully-qualified module path — encodes algorithm/implementation identity
+- `callable_file`: path to .py file — enables `upload_file()` and file-level git tracking
+- `params`: pure scientific variables only (N, B, δ, distribution, seed)
+- `fixed_params`: implementation, jacobian, hardware, algorithm hyperparameters
+- CELLS pattern: one dict per (implementation × jacobian) cell; all share `table_name`
+
+Design principle: **callable name IS the implementation identifier**. No generic
+dispatch functions; no `implementation` string parameter inside the callable.
 
 ---
 
-## SteinSense Paper — Primary EMS Validation Challenge
+## Phase 2 — Work Items (updated 2026-05-03)
 
-`docs/design/implementation-paper-proposal-v7-xla-tpu.md` describes a systematic
-multi-backend GPU implementation study of the SteinSense AMP algorithm. EMS is named
-as the dispatch infrastructure and BigQuery as the unified result store (Contribution 7).
+### 0. Package Refactor (prerequisite — do first)
+Split `manager.py` into `storage.py`, `cluster.py`, `registry.py`, `utils.py`.
+`StorageBackend` abstraction replaces 4× if/elif dispatch chains.
 
-Key requirements this places on EMS:
-- `implementation` and `hardware` as first-class sweep parameters (columns in results)
-- `seed` as explicit sweep parameter (controlled RNG for cross-implementation joins)
-- Multi-cluster dispatch: same experiment dict → Sherlock, Marlowe, DGX Spark
-- BigQuery as primary store (all clusters write to one table)
-- R-6 (git hash) is an audit trail requirement, not optional
-- Experiment registry must track which implementations ran, with what code version
+### 1. R-9: Parameter Injection
+EMS injects `{**swept_params, **fixed_params}` into every result row automatically.
+Must handle multi-row returns. Blocked by OQ-4 (single-row vs multi-row decision).
 
-The core sweep is tractable (N ≤ 5000 for most cells); N=10⁶ is Marlowe-only.
-Current `Databases` write batching handles this scale without modification.
+### 2. R-6: Git Hash Capture
+Capture research project git hash at launch. Location (per-row vs registry) blocked by OQ-7.
 
-Design agenda (in order — each produces a `docs/design/` document):
-1. SteinSense experiment dict (parameter schema)
-2. SteinSense results schema (what the callable returns)
-3. Progress visualization for 6-dimensional space
-4. AD-5: experiment registry — forced decision by this study
-5. Multi-cluster coordination design
+### 3. Experiment Registry (OQ-6 — decision pending)
+Queryable record: researcher, project, date, git hash, callable, linked notebook.
+Options: BigQuery table / JSON directory / Prefect Flow metadata.
+Must resolve before Items 4b/4c.
 
----
+### 4a. JupyterHub Deployment (independent)
+Install on Mac Pro as `launchd` service. Multi-user Tailscale access. Git-pull notebooks.
+Can start after Item 0.
 
-## Phase 2 — Work Items (priority order, updated 2026-04-25)
+### 4b. Prefect Integration (independent of 4a)
+Wrap `do_on_cluster()` as Prefect Flow. `launchd` service on Mac Pro.
+Requires Items 0–3 complete.
 
-### 0. Architecture prerequisite (do before any feature work)
-Refactor `manager.py` into a package:
-- `storage.py` — `Databases`, `StorageBackend` abstraction (replaces 4× if/elif dispatch)
-- `cluster.py` — `EvalOnCluster`, `do_on_cluster`, `do_experiment`
-- `registry.py` — experiment record, registry
-- `utils.py` — parameter unrolling, dedup, JSON helpers
+### 4c. JupyterHub → Prefect Wiring (requires 4a + 4b)
+`submit_experiment()` from notebook cell. End-to-end fire-and-forget validation.
 
-### 1. R-9: Parameter injection
-EMS injects input params into every result row automatically. Must handle multi-row
-returns (e.g., AMP researcher emits one row per iteration, not per param combo).
-
-### 2. R-6: Git hash capture (moved up from item 4)
-Capture git hash of research project code (not only EMS version) at run time.
-Required audit trail for SteinSense 14-cell implementation matrix.
-
-### 3. Experiment registry (AD-5 — decision pending)
-Queryable record: researcher, project, date, git hash, linked notebook.
-Options: embedded BigQuery table, structured JSON directory, Prefect Flow metadata.
-**Must resolve before hub work begins. SteinSense study makes requirements concrete.**
-
-### 4. Prefect integration
-Wrap `do_on_cluster()` as a Prefect Flow. Deploy Prefect Server on Mac Pro as a
-persistent service (launchd plist). Expose Dask dashboard via Tailscale.
-
-### 5. R-11: Common result utilities
-Groupby aggregation, SQLite→cloud sync, CSV export — built into EMS, not copy-pasted.
-
-### 6. R-12: Variable-length output helper
-Padding helper so researchers don't compute max output dimensions manually.
-
-### 7. R-10: `derive_params()`
-Upstream result table + transformation function → parameter list for downstream experiment.
-Replaces CSV hand-off between multi-phase experiments.
+### 5–7. R-11, R-12, R-10
+Common utilities, variable-length output helper, `derive_params()`.
 
 ---
 
-## Researcher Profiles (from code reviews)
+## SteinSense Repo
 
-**Apratim Dey (power researcher)** — AMP_matrix_recovery:
-- 14 scripts, 70+ branches, 116 JSON files, SLURM + Coiled at scale
-- Pain: no notebooks, manual param injection, CWD JSON scatter, no failure record
-- Key: multi-row results per callable (one row per AMP iteration) — R-9 must handle this
-
-**Milad B (standard researcher)** — MatrixCompletion / Matrix_Denoising:
-- Multi-phase experiments with CSV hand-off between phases
-- Duplicate utility scripts across projects; manual variable-length output padding
-- Analysis notebook in a completely separate disconnected repo
+- Brief at `docs/design/steinsense-repo-brief.md` — handed to SteinSense Claude instance
+- Structure: `src/steinsense/{numpy,jax_cpu,jax_gpu,pytorch_gpu,cupy,triton,cutile}.py`
+- Each file: `run_recovery_ad`, `run_recovery_closed` (two entry points per backend)
+- OQ-4 decision (single-row vs multi-row output) must be made by SteinSense Claude and
+  reported back — it drives EMS R-9 design
+- EMS v1.0 compat: temporary notebook wrapper adds params to rows until R-9 lands
 
 ---
 
-## Open Questions (3 — see VISION.md)
+## Design Agenda (next docs to produce)
 
-1. **Experiment registry implementation**: BigQuery table vs. JSON directory vs.
-   Prefect Flow metadata? **Must resolve before hub work begins.**
-2. **Failure handling**: re-queue, flag for review, or log and skip? Default behavior?
-3. **Cost tracking**: record cloud compute cost per experiment; charge to funding account?
+1. `steinsense-results-schema.md` — resolves OQ-4; unblocks R-9
+2. `progress-visualization.md` — resolves OQ-8
+3. `experiment-registry-design.md` — resolves OQ-6; blocks Items 4b/4c
+4. `multi-cluster-coordination.md` — cluster routing design for Item 4b
+
+---
+
+## Model & Review Strategy
+
+- Sonnet 4.6 for design and implementation (well-scoped, document-driven work)
+- Adversarial critique from Gemini/Codex at key decision points
+- Give other models specific bounded questions, not open-ended reviews
+- Gemini already corrected the SteinSense Onsager lemma proof
 
 ---
 
 ## Workflow / Preferences
 
-- Read `docs/VISION.md` and `docs/architecture-decisions.md` at session start.
-- Commit after each meaningful unit of work; push via `git push`.
-- One Claude Code instance per project in a tmux session on the Mac Pro.
-- Enter plan mode before non-trivial implementation.
-- Concise, direct responses preferred.
+- Read `docs/VISION.md`, `docs/architecture-decisions.md`, `docs/design/phase2-plan.md`
+  at session start.
+- Commit after each meaningful unit; push immediately.
+- Design docs → `docs/design/`. Open questions → `docs/design/open-questions.md`.
 - New architectural choices → new AD entry in `docs/architecture-decisions.md`.
-- Design documents and experiment records live in `docs/design/`.
-- Stay in design phase: use SteinSense study to validate each EMS design decision
-  before implementation begins.
+- Notebook prototypes → `notebooks/prototypes/`; template → `notebooks/template/`.
+- Concise, direct responses preferred.
+- Explicit file versioning (v1, v2, v3) until user is comfortable with git-only versioning.
