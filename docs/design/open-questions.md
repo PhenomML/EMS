@@ -1,6 +1,6 @@
 # EMS Design — Open Questions
 
-**Updated:** 2026-05-03 — OQ-4 split into OQ-4a (resolved) and OQ-4b (open); OQ-7 resolved
+**Updated:** 2026-05-03 — OQ-4 split into OQ-4a (resolved) and OQ-4b (open); OQ-6, OQ-7 resolved
 **Purpose:** Single living document for all unresolved design questions across EMS
 Phase 2. Update status here when a question is resolved; do not remove resolved entries
 (mark them Resolved with the decision and date). Source documents retain their original
@@ -18,7 +18,7 @@ text; this file is the canonical status tracker.
 | OQ-4a | SteinSense callable output: single-row or multi-row? | **Resolved** | R-9 design (item 1) |
 | OQ-4b | EMS R-9: API contract for multi-row callables | Open | R-9 design (item 1) |
 | OQ-5 | `read_params()` filtering for multi-cell heatmaps | Open | progress heatmap usability |
-| OQ-6 | Experiment registry implementation | Open | hub/Prefect work (item 4) |
+| OQ-6 | Experiment registry implementation | **Resolved** | hub/Prefect work (item 4) |
 | OQ-7 | Git hash location: per-row vs. registry record | **Resolved** | R-6 (item 2), registry (item 3) |
 | OQ-8 | Progress heatmap axis selection for N>2 params | Open | notebook prototype finalization |
 | OQ-9 | Section 5a/5b split: one cell or two? | Open | notebook prototype finalization |
@@ -150,7 +150,7 @@ jacobian, hardware)` combination.
 ## Experiment Registry
 
 ### OQ-6 — Experiment registry implementation
-**Status:** Open
+**Status:** Resolved 2026-05-03 — **JSON directory on hub + Prefect annotations + BigQuery sync via R-11.** See `experiment-registry-design.md`.
 **Raised in:** `docs/VISION.md` (Open Question 1), `phase2-plan.md`
 **Blocks:** hub/Prefect work (Phase 2 item 4)
 
