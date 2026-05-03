@@ -1,6 +1,6 @@
 # EMS Design — Open Questions
 
-**Updated:** 2026-05-03
+**Updated:** 2026-05-03 — OQ-4 split into OQ-4a (resolved) and OQ-4b (open); OQ-7 resolved
 **Purpose:** Single living document for all unresolved design questions across EMS
 Phase 2. Update status here when a question is resolved; do not remove resolved entries
 (mark them Resolved with the decision and date). Source documents retain their original
@@ -15,10 +15,11 @@ text; this file is the canonical status tracker.
 | OQ-1 | Worker import path for callable | Open | Prefect integration (item 4) |
 | OQ-2 | Callable verification at launch | Open | `do_on_cluster()` refactor |
 | OQ-3 | Backwards compatibility for `do_on_cluster()` callers | Open | package refactor (item 0) |
-| OQ-4 | SteinSense callable: single-row or multi-row output? | Open | R-9 design (item 1) |
+| OQ-4a | SteinSense callable output: single-row or multi-row? | **Resolved** | R-9 design (item 1) |
+| OQ-4b | EMS R-9: API contract for multi-row callables | Open | R-9 design (item 1) |
 | OQ-5 | `read_params()` filtering for multi-cell heatmaps | Open | progress heatmap usability |
 | OQ-6 | Experiment registry implementation | Open | hub/Prefect work (item 4) |
-| OQ-7 | Git hash location: per-row vs. registry record | Open | R-6 (item 2), registry (item 3) |
+| OQ-7 | Git hash location: per-row vs. registry record | **Resolved** | R-6 (item 2), registry (item 3) |
 | OQ-8 | Progress heatmap axis selection for N>2 params | Open | notebook prototype finalization |
 | OQ-9 | Section 5a/5b split: one cell or two? | Open | notebook prototype finalization |
 | OQ-10 | Failure handling default behavior | Open | hub/Prefect work (item 4) |
@@ -80,27 +81,47 @@ design moves the callable into the dict, making the positional argument redundan
 
 ---
 
-### OQ-4 — SteinSense callable: single-row or multi-row output?
-**Status:** Open
+### OQ-4a — SteinSense callable output: single-row or multi-row?
+**Status:** Resolved 2026-05-03 — **single-row**. See `steinsense-results-schema.md`.
 **Raised in:** `phase2-plan.md`
 **Blocks:** R-9 design (Phase 2 item 1)
 
-The R-9 parameter injection design depends on what the callable returns.
+The `run_recovery_*` callables return one row per invocation: (wall_time,
+n_iterations, recovered, final_error). All eight research questions in the paper
+are answerable from per-invocation aggregates; per-iteration traces are not needed
+for the primary analysis. See `steinsense-results-schema.md` for the full schema.
 
-- **Single-row**: callable returns one DataFrame row per invocation
-  (one recovery attempt → one row of metrics). R-9 injection is straightforward.
-- **Multi-row**: callable returns multiple rows per invocation
-  (e.g., one row per AMP iteration). EMS must inject the full input param dict
-  into every row, not just the first.
+---
 
-For SteinSense specifically: does `run_recovery` return one row (wall_time,
-n_iterations, recovered, final_error) or multiple rows (one per iteration with
-intermediate state)? The paper's primary metrics suggest single-row, but the AMP
-iteration trace may be scientifically interesting.
+### OQ-4b — EMS R-9: API contract for multi-row callables
+**Status:** Open
+**Raised in:** this session (split from OQ-4)
+**Blocks:** R-9 design (Phase 2 item 1)
 
-**Decision needed before:** implementing R-9. Resolving this also determines whether
-Apratim Dey's multi-row pattern (one row per AMP iteration) and SteinSense are the
-same case or two distinct R-9 subcases.
+Multi-row callables are a first-class EMS requirement, not a future extension.
+Apratim Dey's research code returns one row per AMP iteration (intermediate error,
+residual, wall time at each step) — a pattern proven scientifically useful for
+diagnosing convergence behavior and attributing failures to specific iterations.
+
+SteinSense uses single-row (OQ-4a resolved), but EMS R-9 must handle both cases.
+The open question is the API contract: how does R-9 know whether a callable is
+single-row or multi-row, and does injection differ?
+
+**Options:**
+
+| Option | Mechanism | Tradeoff |
+|--------|-----------|----------|
+| A — Infer from shape | If returned DataFrame has >1 row, inject into all rows | Zero API change; can misfire if a single-row callable returns a 1-row DataFrame |
+| B — Dict flag | `experiment['multi_row'] = True`; R-9 injects into every row | Explicit; requires researcher to declare intent; breaks if they forget |
+| C — Return-type contract | Callable always returns a DataFrame; R-9 always injects into all rows regardless of count | Simplest; single-row is just multi-row with len=1; no special casing |
+
+**Option C is the likely answer:** injection into all rows is identical code regardless
+of DataFrame length. Single-row is just the len=1 case. No flag, no inference — just
+`for k, v in params.items(): result[k] = v` applied to whatever the callable returns.
+
+**Decision needed before:** implementing R-9. Option C should be validated against
+Apratim's actual return structure to confirm no edge cases (e.g., ragged DataFrames,
+columns that vary per row).
 
 ---
 
@@ -155,7 +176,7 @@ entry. A BigQuery table can be added later without changing the dict format.
 ---
 
 ### OQ-7 — Git hash location: per-row vs. registry record
-**Status:** Open
+**Status:** Resolved 2026-05-03 — **per-row**. See `steinsense-results-schema.md`.
 **Raised in:** `phase2-plan.md`
 **Blocks:** R-6 (Phase 2 item 2), registry design (item 3)
 
