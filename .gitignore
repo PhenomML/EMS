@@ -230,3 +230,6 @@ fabric.properties
 src/EMS/data/EMS.db3
 *.db3
 *.txt
+
+# Obsidian
+.obsidian/
