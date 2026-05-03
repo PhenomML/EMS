@@ -1,6 +1,7 @@
 # EMS Phase 2 — Architecture & Plan
 
 **Date:** 2026-05-03
+**Updated:** 2026-05-03 — Item 4 split; JupyterHub added as Phase 2 surface layer (AD-5)
 **Status:** Active — design phase; implementation not yet begun
 **Branch:** `claude-v2.0.0_phase2`
 
@@ -44,43 +45,47 @@ frontend reads. This separation means the two systems can evolve independently.
 
 ### Hub Architecture
 
-Phase 2 adds a hub layer between the researcher and the compute cluster:
+Phase 2 adds two hub-layer services to the Mac Pro: JupyterHub as the notebook surface
+and Prefect Server as the job orchestration layer.
 
 ```
 Researcher (any device, Tailscale)
         │
-   ┌────┴──────────────────────┐
-   │                           │
-   ▼                           ▼
-Prefect Server             Dask Dashboard
-(job submit / history /    (live cluster view —
- experiment registry)       free while cluster runs)
-        │
-        │ DaskTaskRunner
-        ▼
-   Dask Cluster  ──writes──▶  BigQuery / SQLite
-   (Sherlock / DGX Spark / Coiled on GCP)
-        │
-        ▼
-   Analysis Notebook  ──reads──▶  BigQuery
-   (local Jupyter / R)
+   ┌────┼─────────────────────────────┐
+   │    │                             │
+   ▼    ▼                             ▼
+JupyterHub              Prefect Server           Dask Dashboard
+(edit notebooks /       (job execution /         (live cluster view)
+ submit to Prefect /     history / registry)
+ run analysis)                  │
+        │                DaskTaskRunner
+        │ submit_experiment()   │
+        └──────────────▶  Dask Cluster ──writes──▶  BigQuery / SQLite
+   (Sherlock / DGX Spark / Coiled on GCP)           ▲
+                                                     │ reads
+                                             Analysis Notebooks
+                                             (running in JupyterHub)
 ```
 
-**Prefect Server** runs as a persistent service on the lab's Intel Mac Pro (Tailscale-
-accessible). Researchers submit experiments via Prefect's web UI or Python API and
-immediately disconnect. The experiment runs to completion as a server-side Prefect Flow.
-Job status, logs, and run history are visible from any device via Tailscale URL.
+**JupyterHub** runs as a `launchd` service on the Mac Pro, Tailscale-accessible.
+Researchers edit experiment notebooks, submit to Prefect, and run BigQuery analysis —
+all from a browser, from any device. Notebooks live in git repos and are pulled into
+JupyterHub on demand; JupyterHub is the interface, not the store. See AD-5.
+
+**Prefect Server** runs as a second `launchd` service on the Mac Pro. The JupyterHub
+kernel submits a Prefect Flow via `submit_experiment()` and can immediately die;
+the experiment runs to completion server-side. Job status, logs, and run history are
+visible from any device via Tailscale URL.
 
 **Dask** remains the compute engine. Prefect owns the job lifecycle; Dask owns the
-parallel dispatch. Each does what it does best. `do_on_cluster()` maps directly onto a
-Prefect Flow with a thin wrapper — no change to the existing dispatch logic.
+parallel dispatch. `do_on_cluster()` maps directly onto a Prefect Flow with a thin
+wrapper — no change to the existing dispatch logic.
 
-**BigQuery** is the data contract for multi-cluster work. All clusters (Sherlock, Marlowe,
-DGX Spark, Coiled) write results to the same BigQuery table. The analysis notebook reads
-from BigQuery; it never touches SQLite or PostgreSQL directly.
+**BigQuery** is the data contract for multi-cluster work. All clusters write results to
+the same BigQuery table. Analysis notebooks in JupyterHub read from BigQuery directly.
 
-For the full record of alternatives considered (Ray, JupyterHub, Temporal, Coiled,
-custom FastAPI), see `docs/architecture-decisions.md`.
+For the full record of alternatives considered (Ray, Temporal, Marimo, VS Code Server,
+local-only Jupyter), see `docs/architecture-decisions.md` (AD-2, AD-5).
 
 ---
 
@@ -130,20 +135,20 @@ before any implementation begins. The sequence:
 
 | File | Status | Purpose |
 |------|--------|---------|
-| `notebook-prototype-v1.md` | Draft — one open question | Standardized experiment notebook structure |
+| `notebook-prototype-v3.md` | Draft — open questions tracked in `open-questions.md` | Standardized experiment notebook structure (current version) |
 | `implementation-paper-proposal-v7-xla-tpu.md` | Complete | SteinSense paper spec; primary validation challenge |
+| `open-questions.md` | Living — 11 open questions | Consolidated tracker for all unresolved design questions |
 | `phase2-plan.md` | This document | Overall plan and architecture |
 
 **Design agenda — documents to produce next:**
 
-1. `steinsense-experiment-dict.md` — the actual experiment dict for the SteinSense sweep;
-   forces decisions on parameter schema and seed convention
-2. `steinsense-results-schema.md` — what the SteinSense callable returns; drives R-9 design
-3. `progress-visualization.md` — how to show completion across 6 parameter dimensions;
-   resolves the open question in `notebook-prototype-v1.md`
-4. `experiment-registry-design.md` — AD-5 decision: BigQuery table vs. JSON directory
+1. `steinsense-results-schema.md` — what the SteinSense callable returns (single-row vs.
+   multi-row); drives R-9 design and resolves OQ-4
+2. `progress-visualization.md` — completion visualization across N>2 parameter dimensions;
+   resolves OQ-8
+3. `experiment-registry-design.md` — OQ-6 decision: BigQuery table vs. JSON directory
    vs. Prefect Flow metadata; must resolve before hub work begins
-5. `multi-cluster-coordination.md` — how one experiment dict dispatches across Sherlock,
+4. `multi-cluster-coordination.md` — how one experiment dict dispatches across Sherlock,
    Marlowe, and DGX Spark with results landing in one BigQuery table
 
 ---
@@ -229,10 +234,35 @@ registry design affects how Prefect Flows are structured and tagged.
 
 ---
 
-### Item 4 — Prefect Integration
+### Item 4a — JupyterHub Deployment
+
+Deploy JupyterHub on the Mac Pro as a `launchd` service, accessible to the team via
+Tailscale. Configure multi-user kernel isolation. Connect to researcher project repos
+via git pull on demand.
+
+**Purpose:** Validate the notebook-as-spec workflow with real researchers before the
+Prefect integration is complete. Even without Prefect wired up, researchers can use
+JupyterHub for:
+- Editing experiment specification notebooks
+- Running BigQuery analysis notebooks from any device
+- Browsing the experiment registry (once it exists)
+
+**What we are measuring:** Do researchers actually open JupyterHub, or do they fall
+back to local Jupyter and SSH? The answer shapes whether the Phase 3 design is built
+around JupyterHub as the primary interface.
+
+**Can start:** Immediately after Item 0 (package refactor). Independent of Items 1–3
+and Item 4b.
+
+**Design document needed:** No — JupyterHub installation and configuration is
+operational, not a design decision. AD-5 records the architectural choice.
+
+---
+
+### Item 4b — Prefect Integration
 
 Wrap `do_on_cluster()` as a Prefect Flow. Deploy Prefect Server on the Mac Pro as a
-persistent `launchd` service. Expose the Prefect dashboard via Tailscale.
+persistent `launchd` service alongside JupyterHub.
 
 The existing `do_on_cluster()` function signature does not change. The Flow is a thin
 wrapper that adds persistent execution semantics:
@@ -244,7 +274,7 @@ from prefect import flow
 def run_experiment(experiment: dict, cluster_config: dict):
     db = setup_database(experiment['table_name'])
     client = setup_cluster(cluster_config)
-    do_on_cluster(experiment, callable_fn, client, db)
+    do_on_cluster(experiment, client, db)
 ```
 
 **Multi-cluster routing:** The `cluster_config` dict parameterizes which cluster to use
@@ -252,10 +282,32 @@ def run_experiment(experiment: dict, cluster_config: dict):
 experiment dict; different cluster config. Results from all clusters land in the same
 BigQuery table because `table_name` is fixed in the experiment dict.
 
-**Design document needed:** `multi-cluster-coordination.md` — how cluster config is
-structured and how Prefect routes to each.
+**Can start:** After Items 0–3. Independent of Item 4a.
 
-**Blocking:** Items 0–3 must be complete first.
+**Design document needed:** `multi-cluster-coordination.md` — how cluster config is
+structured and how Prefect routes to each target.
+
+---
+
+### Item 4c — JupyterHub → Prefect Submission Wiring
+
+Connect JupyterHub notebooks to Prefect Server: implement `submit_experiment()` as the
+single notebook cell that submits a Prefect Flow and returns immediately.
+
+```python
+from EMS.flows import submit_experiment
+
+run_url = submit_experiment(experiment, cluster_config)
+print(f'Track at: {run_url}')
+```
+
+This is the end-to-end fire-and-forget workflow: researcher edits the experiment dict
+in JupyterHub, runs `submit_experiment()`, closes the browser, checks Prefect UI from
+phone.
+
+**Requires:** Items 4a and 4b both complete.
+
+**This is the primary usability validation point for the Phase 2 hub architecture.**
 
 ---
 
@@ -299,16 +351,16 @@ experiment. Replaces the CSV hand-off pattern observed in Milad B's research.
 
 ## Open Questions
 
-These must be resolved during the design phase, in the order they block work items:
+Tracked in `docs/design/open-questions.md` (living document, 11 questions).
+Key blocking questions in priority order:
 
-| # | Question | Blocks | Status |
-|---|----------|--------|--------|
-| 1 | Experiment registry: BigQuery table vs. JSON dir vs. Prefect metadata? | Item 4 | Open — `experiment-registry-design.md` needed |
-| 2 | Where does the git hash live — in each result row, or in a registry record? | Items 2, 3 | Open — resolved by Items 2+3 design docs |
-| 3 | SteinSense callable: single-row or multi-row output? | Item 1 | Open — `steinsense-results-schema.md` needed |
-| 4 | Progress heatmap for N>2 axes: edit-the-cell vs. ipywidgets? | `notebook-prototype-v1.md` | Open |
-| 5 | Failure handling: re-queue, flag, or log and skip? | Item 4 | Open |
-| 6 | Cost tracking per experiment? | Item 3 | Open |
+| OQ | Question | Blocks |
+|----|----------|--------|
+| OQ-4 | SteinSense callable: single-row or multi-row? | R-9 design (Item 1) |
+| OQ-6 | Experiment registry implementation | Items 4b, 4c |
+| OQ-7 | Git hash: per-row vs. registry record | Items 2, 3 |
+| OQ-1 | Worker import path for callable | Item 4b |
+| OQ-10 | Failure handling default | Item 4b |
 
 ---
 

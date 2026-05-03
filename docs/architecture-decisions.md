@@ -207,8 +207,8 @@ and observability, not notebook hosting.
   design phase.
 - The Dask scheduler dashboard (port 8787) is exposed via Tailscale as a secondary
   live-progress URL while clusters are active.
-- JupyterHub on the Mac Pro remains an option for shared notebook execution if the team
-  later requests it; it is not a Phase 2 deliverable.
+- JupyterHub on the Mac Pro is adopted as the Phase 2 notebook surface layer (see AD-5).
+  Its role is researcher interface and analysis, not job execution.
 
 ---
 
@@ -258,3 +258,127 @@ in isolation against the full dependency chain.
 
 Python 3.13 (free-threaded mode) deferred to late 2025/2026 review — the scientific
 ecosystem has not yet shipped production-ready free-threaded wheels.
+
+---
+
+## AD-5: Hub Surface Layer — JupyterHub
+
+**Decision date:** 2026-05-03
+**Status:** Decided — **JupyterHub on Mac Pro, Phase 2**
+
+### Context
+
+The Phase 2 hub architecture (AD-2) establishes Prefect as the job orchestration layer
+and Dask as the compute engine, but provides no shared, server-side notebook environment.
+Researchers need a surface to:
+
+- Find, edit, and version experiment specification notebooks
+- Submit experiments to Prefect without maintaining a local Jupyter session
+- Run analysis notebooks connected to BigQuery from any device
+- Browse the experiment registry alongside their notebooks
+
+Without a shared surface, the notebook-as-spec workflow central to the EMS design
+cannot be validated against real researcher behavior.
+
+### Why This Is Different from the AD-2 Rejection
+
+In AD-2, JupyterHub was rejected as the **executor**: the architecture where a kernel
+running in JupyterHub calls `do_on_cluster()` and the experiment dies when the browser
+disconnects. That rejection stands.
+
+AD-5 adopts JupyterHub as the **surface layer** only. The kernel submits an experiment
+to Prefect via a single API call and can immediately die; Prefect owns the persistent
+execution. JupyterHub is the researcher's interface; Prefect is the engine.
+
+### Options Examined
+
+**Local Jupyter only (status quo)**
+Each researcher runs their own Jupyter session on their laptop or via SSH. No shared
+notebook environment; no server-side access from phone or tablet.
+*Rejected:* Does not satisfy the "check from any device" requirement for analysis;
+creates no shared record of experiment notebooks.
+
+**VS Code Server (code-server)**
+A browser-accessible VS Code instance running on the Mac Pro. Full IDE experience;
+supports Jupyter notebooks via extension.
+*Not selected:* Heavier than needed for notebook-centric workflows; less familiar to
+scientific Python community; no native multi-user kernel isolation.
+
+**Marimo**
+Reactive notebook format (`.py` files, not JSON); self-hostable; reproducible by
+design. Considered in AD-2.
+*Not selected:* Young ecosystem; R support absent; risk for a production lab environment.
+Worth revisiting in Phase 3 or 4.
+
+**JupyterHub on Mac Pro**
+Multi-user JupyterHub running as a `launchd` service on the Mac Pro, accessible via
+Tailscale. Each researcher gets an isolated kernel environment. Notebooks are pulled
+from git repos on demand; JupyterHub is the interface, not the store.
+*Selected.* See Decision and Rationale below.
+
+### Decision
+
+**JupyterHub on Mac Pro as the Phase 2 notebook surface, brought forward from Phase 3.**
+
+### Rationale
+
+**Early validation is the primary reason.** The notebook-as-spec workflow is central
+to the EMS Phase 2 design: researchers define experiment dicts in notebooks, submit to
+Prefect, and disconnect. If researchers bypass JupyterHub in practice — preferring local
+Jupyter and SSH — the Prefect integration design built around that workflow is wrong.
+Discovering this in Phase 2 costs an operational setup. Discovering it in Phase 3, after
+Prefect integration is complete, is expensive to unwind.
+
+**Operational cost is low.** JupyterHub is a Python package; `launchd` plist deployment
+on the Mac Pro takes hours. The incremental cost of adding it to Phase 2 is small
+relative to the feedback value.
+
+**Complementary roles, no conflict.** JupyterHub and Prefect solve different problems
+and do not overlap. JupyterHub provides the editing and analysis surface; Prefect
+provides persistent execution and history. Together they cover the full researcher
+workflow without either system doing the other's job.
+
+### Chosen Architecture
+
+```
+Researcher (any device, Tailscale)
+        │
+   ┌────┼─────────────────────────────┐
+   │    │                             │
+   ▼    ▼                             ▼
+JupyterHub              Prefect Server           Dask Dashboard
+(edit notebooks /       (job execution /         (live cluster view)
+ submit to Prefect /     history / registry)
+ run analysis)                  │
+        │                DaskTaskRunner
+        │ submit_experiment()   │
+        └──────────────▶  Dask Cluster ──writes──▶  BigQuery / SQLite
+                                                     ▲
+                                                     │ reads
+                                             Analysis Notebooks
+                                             (running in JupyterHub)
+```
+
+### What We Are Measuring
+
+Bringing JupyterHub into Phase 2 is also an instrumented experiment. Success criteria:
+
+1. Researchers open JupyterHub (not SSH to local Jupyter) when starting experiments.
+2. The git-repo → JupyterHub pull workflow is smooth enough that notebooks stay
+   version-controlled without friction.
+3. The `submit_experiment()` notebook cell is the natural entry point for launching
+   experiments, not a workaround.
+4. Researchers use JupyterHub for BigQuery analysis without needing a local setup.
+
+If criteria 1 or 3 fail, the notebook-as-spec design requires revision before Phase 3.
+
+### Consequences
+
+- JupyterHub is deployed on the Mac Pro as a `launchd` service alongside Prefect Server.
+- Notebooks live in researcher project git repos; JupyterHub pulls them on demand.
+  JupyterHub is not the notebook store.
+- Phase 2 Item 4 is split into three sub-items: 4a (JupyterHub deployment), 4b
+  (Prefect integration), 4c (JupyterHub → Prefect submission wiring). 4a and 4b are
+  independent and can proceed in parallel; 4c requires both.
+- The experiment registry (OQ-6, Item 3) gains a natural browsable surface in JupyterHub
+  before a dedicated registry UI is built.
