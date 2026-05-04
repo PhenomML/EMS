@@ -1,6 +1,6 @@
 # EMS Design — Open Questions
 
-**Updated:** 2026-05-04 — OQ-4 split into OQ-4a (resolved) and OQ-4b (open); OQ-6, OQ-7 resolved; OQ-12 (batched MC dispatch), OQ-13 (RNG reproducibility) added
+**Updated:** 2026-05-04 — OQ-6, OQ-7 resolved; OQ-4 split (OQ-4a resolved); OQ-12, OQ-13 added; OQ-13 partially resolved (production RNG pattern confirmed)
 **Purpose:** Single living document for all unresolved design questions across EMS
 Phase 2. Update status here when a question is resolved; do not remove resolved entries
 (mark them Resolved with the decision and date). Source documents retain their original
@@ -25,7 +25,7 @@ text; this file is the canonical status tracker.
 | OQ-10 | Failure handling default behavior | Open | hub/Prefect work (item 4) |
 | OQ-11 | Cost tracking per experiment | Open | registry design (item 3) |
 | OQ-12 | Batched MC dispatch design | Open | R-9 design (item 1), GPU utilization |
-| OQ-13 | RNG reproducibility convention | Open | callable contract, result schema |
+| OQ-13 | RNG reproducibility convention | Partially resolved | callable contract, result schema |
 
 ---
 
@@ -318,65 +318,46 @@ internally from `mc` + geometry; `seed_val` is never stored or injected.
 ---
 
 ### OQ-13 — RNG reproducibility convention
-**Status:** Open
+**Status:** Partially resolved 2026-05-04 — production pattern confirmed; `rng_seed` column open.
 **Raised in:** EMS issue #12 discussion (2026-05-04)
-**Blocks:** callable contract, result schema, SteinSense reproducibility claims
+**Blocks:** callable contract, result schema
 
-Randomness management is critical to scientific reproducibility across implementations
-and across time. The core tension: different frameworks use fundamentally incompatible
-RNG systems that EMS cannot unify.
+**Production pattern (confirmed by SteinSense Claude, EMS issue #12):**
 
-**What EMS cannot own:**
-- The RNG object itself. NumPy (`np.random.default_rng`), JAX (`jax.random.PRNGKey`
-  with functional key splitting), PyTorch (`torch.manual_seed` / `torch.Generator`),
-  and cuPy each have different APIs, different statistical properties, and different
-  parallelism models. Providing a unified RNG would require mandating one framework's
-  approach, which is incompatible with the multi-backend design.
-- The seed derivation formula. Apratim's formula mixes all experiment parameters into
-  an integer seed (`seed_val = round(1 + round(k*1000) + round(n*1000) + ...)`).
-  The formula is study-specific; a different study may have different parameters to
-  mix. Even in the JAX implementation, problem generation uses `np.random.default_rng`
-  while computation uses JAX — the choice is the callable's.
+Problem generation is always framework-agnostic: `numpy.random.default_rng(seed_val)`.
+Computation is backend-specific (JAX vmap, cuBLAS, cuTile, etc.). The vmap or batched
+kernel covers the AMP *computation*, not problem generation. Generation is a Python
+loop over `mc` values — negligible cost compared to AMP iterations:
 
-**What EMS should own:**
-- **`mc` as a first-class parameter convention.** `mc` is the Monte Carlo replicate
-  index (0-based integer). Its presence in `params` signals that this experiment
-  uses MC replication. EMS deduplicates, deduplicates per `mc`, and (in OQ-12)
-  groups by `mc` for batched dispatch.
+```python
+problems = [gen_problem(N, B, k, n, mc_i, ...) for mc_i in mc_list]
+A_batch = np.stack([p[0] for p in problems])   # (K, n, N)
+# ... hand off stacked arrays to backend
+```
+
+Historical JAX PRNG usage (`gen_problem_dey`) is a frozen test fixture locked to
+Apratim's Sherlock experiments. It is not the production pattern and must not change.
+The JAX key-splitting concern is therefore moot for production code.
+
+**What EMS owns:**
+- **`mc` as a first-class parameter.** The MC replicate index (0-based integer).
+  EMS deduplicates per `mc` and (OQ-12) groups by `mc` for batched dispatch. R-9
+  injects the original `mc` value into every result row — not the derived `seed_val`.
 - **The stability requirement.** The seed derivation function for a given `table_name`
-  must not change across runs. EMS cannot enforce this technically, but it must
-  document it as a callable contract: if you change the seed formula, you must use
-  a new `table_name`.
-- **The record.** The actual integer seed used (however derived) should be stored
-  in every result row as `rng_seed: INT64`. This allows any result row to be
-  independently reproduced by calling `callable(**params, rng_seed=stored_seed)` —
-  without needing EMS, without needing to know `mc`, and without needing the
-  derivation formula to be stable.
+  must not change. EMS cannot enforce this technically; it is a documented callable
+  contract. Changing the formula requires a new `table_name`.
 
-**Proposed result row addition:**
+**What EMS does not own:**
+- The RNG object or the seed derivation formula. Both are the callable's private
+  concern. EMS passes `mc`; the callable converts it to a numpy seed internally.
 
-| Column | Type | Source | Notes |
-|--------|------|--------|-------|
-| `rng_seed` | INT64 | callable (returned in output DataFrame) | The actual integer seed passed to the RNG. Not derived by EMS. Callable is responsible for embedding it. |
+**Remaining open question — `rng_seed` column:**
+Since `seed_val` is a deterministic function of the stored `mc` and stored params,
+storing `rng_seed` separately is redundant *if* the seed function is stable. But
+it is cheap insurance: a researcher can reproduce any row without knowing the formula
+or needing EMS. Decision: optional for now; SteinSense will decide whether to include
+it in its result rows based on practical reproducibility needs.
 
-**Why `rng_seed` comes from the callable, not EMS:**
-The callable knows which RNG it used and what seed it passed. Only the callable can
-report the actual seed reliably — EMS cannot reconstruct it from `mc` without knowing
-the derivation formula and the framework.
-
-**Stability convention (for CLAUDE.md of each research repo):**
-> The seed derivation function for table `{table_name}` is defined in `{module}` at
-> version `{git_hash}`. Do not modify it. If the derivation changes, create a new
-> `table_name`.
-
-**Open sub-questions:**
-1. Should `rng_seed` be REQUIRED in all result rows, or NULLABLE for callables that
-   don't expose their internal seed?
-2. For the batched case (OQ-12), each row has a different `rng_seed`. The callable
-   must embed a per-row `rng_seed` in the returned DataFrame alongside other output
-   columns.
-3. JAX's PRNG uses a key pair `(uint32, uint32)` — not a single integer. If a JAX
-   callable uses `jax.random.PRNGKey(seed_val)` where `seed_val` is an integer, the
-   integer is sufficient to reconstruct the key. But if it uses `jax.random.split`,
-   the derived subkeys cannot be recovered from a single integer. How should JAX
-   key splitting be recorded?
+**Stability convention (to add to CLAUDE.md of each research repo):**
+> The seed derivation function for table `{table_name}` is defined in `{callable_module}`
+> and must not change. Changing it requires a new `table_name`.
