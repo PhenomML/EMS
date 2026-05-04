@@ -1,7 +1,8 @@
 # SteinSense Results Schema
 
 **Date:** 2026-05-03
-**Status:** Decision — resolves OQ-4 and OQ-7
+**Updated:** 2026-05-04 — `seed` renamed to `mc`; batch dispatch OQ added
+**Status:** Decision — resolves OQ-4a and OQ-7
 **Drives:** R-9 design (Phase 2 item 1), R-6 design (Phase 2 item 2)
 **Paper reference:** `implementation-paper-proposal-v7-xla-tpu.md`
 
@@ -38,7 +39,7 @@ This matches the paper's stated primary metrics exactly (§Experimental design,
 distributions, wall time scaling with (N, B) — all computed from single-row data
 via groupby aggregations.
 
-**Instance-level validation** — cross-implementation join on `(N, B, delta, seed)` to
+**Instance-level validation** — cross-implementation join on `(N, B, delta, mc)` to
 compare `recovered` and `final_error` between implementations — exactly what
 BigQuery's table structure supports when all 14 cells share one `table_name`.
 
@@ -111,7 +112,7 @@ These are injected from `experiment['params']` (swept) and `experiment['fixed_pa
 | `B` | INT64 | `params` | Signal columns |
 | `delta` | FLOAT64 | `params` | Undersampling ratio n/N |
 | `distribution` | STRING | `params` | `'normal'`, `'poisson'`, `'binary'` |
-| `seed` | INT64 | `params` | RNG seed; first-class sweep parameter |
+| `mc` | INT64 | `params` | MC replicate index (0..19); matches Apratim's BigQuery schema. The callable derives the actual RNG seed internally from `mc` + geometry — `seed_val` is never stored. |
 | `implementation` | STRING | `fixed_params` | Backend identifier: `'numpy'`, `'jax_gpu'`, … |
 | `jacobian` | STRING | `fixed_params` | `'ad'` or `'closed_form'` |
 | `hardware` | STRING | `fixed_params` | `'sherlock_a100'`, `'marlowe_h100'`, `'dgx_spark_gb10'` |
@@ -148,7 +149,7 @@ at the row level. Two scenarios illustrate why a registry-only hash is insuffici
 **Scenario A: Partial re-run.** A bug is discovered in the JAX-GPU closed-form
 implementation after 3,000 of 6,160 invocations have completed. The fixed version is
 committed and the remaining 3,160 are run. The results table now contains rows from
-two git hashes at the same `(N, B, delta, seed, implementation, jacobian, hardware)`.
+two git hashes at the same `(N, B, delta, mc, implementation, jacobian, hardware)`.
 A registry record pointing to one hash misrepresents the true provenance.
 
 **Scenario B: Version comparison.** An analysis notebook queries whether the bug fix
@@ -176,7 +177,7 @@ The `steinsense_sweep_v1` table DDL, expressed as a BigQuery schema JSON:
   {"name": "B",                 "type": "INT64",    "mode": "REQUIRED"},
   {"name": "delta",             "type": "FLOAT64",  "mode": "REQUIRED"},
   {"name": "distribution",      "type": "STRING",   "mode": "REQUIRED"},
-  {"name": "seed",              "type": "INT64",    "mode": "REQUIRED"},
+  {"name": "mc",                "type": "INT64",    "mode": "REQUIRED"},
 
   {"name": "implementation",    "type": "STRING",   "mode": "REQUIRED"},
   {"name": "jacobian",          "type": "STRING",   "mode": "REQUIRED"},
@@ -235,3 +236,4 @@ the v2 transition: the only change will be removing the wrapper, not touching
 | OQ-4a | **Resolved: single-row.** SteinSense `run_recovery_*` returns one row per invocation. |
 | OQ-4b | **Open.** EMS R-9 multi-row API contract — validate against Apratim's return structure. |
 | OQ-7 | **Resolved: per-row.** `project_git_hash` in every result row. |
+| OQ-12 | **Open.** Batched MC dispatch — `batch_key`/`batch_size` design; dedup grouping; R-9 element-wise injection for batch key. See EMS issue #12. |
