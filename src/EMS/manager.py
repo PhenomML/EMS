@@ -436,20 +436,34 @@ def active_remote_engine() -> (Engine, MetaData):
     return None, None
 
 
-def get_gbq_credentials(cred_name: str = 'hs-deep-lab-donoho-3d5cf4ffa2f7.json') -> service_account.Credentials:
-    """Load Google service-account credentials from ``~/.config/gcloud/``.
+_GBQ_SCOPES = ['https://www.googleapis.com/auth/bigquery']
+_GBQ_CRED_ENV = 'EMS_GBQ_CREDENTIALS'
+_GBQ_CRED_DEFAULT = '~/.config/gcloud/ems-bigquery.json'
+
+
+def get_gbq_credentials(cred_path: str = None) -> service_account.Credentials:
+    """Load Google service-account credentials for BigQuery.
+
+    Resolution order:
+    1. ``cred_path`` argument if provided
+    2. ``EMS_GBQ_CREDENTIALS`` environment variable
+    3. ``~/.config/gcloud/ems-bigquery.json`` (conventional default)
+
+    The returned credentials are scoped to BigQuery only
+    (``https://www.googleapis.com/auth/bigquery``). The service account
+    should have ``roles/bigquery.dataEditor`` + ``roles/bigquery.jobUser``.
 
     Args:
-        cred_name: Filename of the JSON key file inside ``~/.config/gcloud/``.
-            Defaults to the Donoho Lab service account key.
+        cred_path: Absolute or ``~``-prefixed path to the service-account JSON key.
 
     Returns:
-        A ``google.oauth2.service_account.Credentials`` object ready for use
-        with ``pandas_gbq`` or other Google Cloud client libraries.
+        A ``google.oauth2.service_account.Credentials`` object scoped for BigQuery.
     """
-    path = f'~/.config/gcloud/{cred_name}'  # Pandas-GBQ-DataSource
+    path = cred_path or os.environ.get(_GBQ_CRED_ENV) or _GBQ_CRED_DEFAULT
     expanded_path = os.path.expanduser(path)
-    credentials = service_account.Credentials.from_service_account_file(expanded_path)
+    credentials = service_account.Credentials.from_service_account_file(
+        expanded_path, scopes=_GBQ_SCOPES
+    )
     return credentials
 
 

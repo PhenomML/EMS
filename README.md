@@ -21,7 +21,7 @@ conda activate EMS
 
 ```yaml
 pip:
-  - git+https://github.com/PhenomML/EMS.git@v1.0.0
+  - git+https://github.com/PhenomML/EMS.git@v1.0.1
 ```
 
 ### Editable install for development
@@ -130,9 +130,17 @@ do_on_cluster(experiment, my_experiment, client, remote=remote)
 ```python
 from EMS.manager import get_gbq_credentials, do_on_cluster
 
-credentials = get_gbq_credentials()          # reads ~/.config/gcloud/<key>.json
+credentials = get_gbq_credentials()
 do_on_cluster(experiment, my_experiment, client, credentials=credentials)
 ```
+
+`get_gbq_credentials()` resolves the service-account key in this order:
+1. `cred_path` argument if provided
+2. `EMS_GBQ_CREDENTIALS` environment variable
+3. `~/.config/gcloud/ems-bigquery.json` (conventional default)
+
+Credentials are scoped to BigQuery only. The service account should have
+`roles/bigquery.dataEditor` + `roles/bigquery.jobUser`.
 
 Alternatively, pass `project_id=` for application-default credentials.
 
@@ -165,7 +173,7 @@ Alternatively, pass `project_id=` for application-default credentials.
 | `Databases(table_name, ...)` | Manages buffered writes to SQLite / PostgreSQL / BigQuery. |
 | `create_remote_connection_engine()` | Create a Cloud SQL PostgreSQL engine from env vars. |
 | `active_remote_engine()` | Create and validate a remote engine. |
-| `get_gbq_credentials(cred_name)` | Load GCP service-account credentials. |
+| `get_gbq_credentials(cred_path)` | Load GCP service-account credentials scoped to BigQuery. |
 
 ### Cluster Evaluation
 
@@ -207,6 +215,7 @@ Alternatively, pass `project_id=` for application-default credentials.
 | `POSTGRES_USER` | PostgreSQL user |
 | `POSTGRES_PASS` | PostgreSQL password |
 | `POSTGRES_DB` | PostgreSQL database name |
+| `EMS_GBQ_CREDENTIALS` | Path to GCP service-account JSON key for BigQuery (defaults to `~/.config/gcloud/ems-bigquery.json`) |
 
 ---
 

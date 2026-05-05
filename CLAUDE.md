@@ -90,7 +90,7 @@ The main orchestration function is `do_on_cluster()`:
 - `dedup_experiment_from_db()` — standalone helper to get remaining params from a DB
 - `get_dataset()` / `on_worker()` — utilities for accessing Dask shared datasets from workers
 - `create_remote_connection_engine()` / `active_remote_engine()` — Cloud SQL PostgreSQL connection via environment variables
-- `get_gbq_credentials()` — loads GCP service account credentials from `~/.config/gcloud/`
+- `get_gbq_credentials()` — loads GCP service account credentials scoped to BigQuery only
 
 ### Remote Database Environment Variables
 
@@ -102,7 +102,9 @@ POSTGRES_PASS
 POSTGRES_DB
 ```
 
-GBQ credentials file defaults to `~/.config/gcloud/hs-deep-lab-donoho-3d5cf4ffa2f7.json`.
+For BigQuery, set `EMS_GBQ_CREDENTIALS` to the path of the service-account JSON key.
+Defaults to `~/.config/gcloud/ems-bigquery.json` if the env var is not set.
+The service account should have `roles/bigquery.dataEditor` + `roles/bigquery.jobUser`.
 
 ### Size Management
 
